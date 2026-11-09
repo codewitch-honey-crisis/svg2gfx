@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "svg2gfx": {
+      "commandName": "Project",
+      "commandLineArgs": "..\\..\\..\\ryzen.svg"
+    },
+    "Usage": {
+      "commandName": "Project",
+      "commandLineArgs": "-?"
+    }
+  }
+}
