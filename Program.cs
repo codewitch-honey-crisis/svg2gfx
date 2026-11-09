@@ -26,7 +26,7 @@ public static class Program
             }
             toDispose = options;
             var isStdin = options.Input == Console.In;
-            var inputName = CliUtility.GetFilename(options.Input) ?? "<stdin>";
+            var inputName = isStdin ? "<stdin>" : Path.GetFileNameWithoutExtension(CliUtility.GetFilename(options.Input));
             XDocument doc;
             try
             {
