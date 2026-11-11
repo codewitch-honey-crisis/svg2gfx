@@ -39,14 +39,27 @@ public static class Program
                 throw new FileNotFoundException($"svg2gfx: cannot read {inputName}: {ex.Message}");
                 
             }
-
+            var isStdout = options.Output == Console.Out;
+            if(!isStdout)
+            {
+                Console.Error.WriteLine($"Writing to {CliUtility.GetFilename(options.Output)}");
+            }
             var gen = new Generator();
             string code;
             try
             {
+
+                var baseName = "draw";
+                if (!isStdout)
+                {
+                    baseName = Path.GetFileNameWithoutExtension(CliUtility.GetFilename(options.Output));
+                } else if(!isStdin)
+                {
+                    baseName = Path.GetFileNameWithoutExtension(CliUtility.GetFilename(options.Input));
+                }
                 code = gen.Generate(doc, new GeneratorOptions
                 {
-                    FunctionName = options.Name ?? MakeIdentifier((options.Prefix ?? "") + (isStdin?"draw":inputName)),
+                    FunctionName = options.Name ?? MakeIdentifier((options.Prefix ?? "") + baseName),
                     SourceName = inputName,
                     Dpi = options.Dpi,
                     Precision = options.Precision,

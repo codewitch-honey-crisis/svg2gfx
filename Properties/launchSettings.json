@@ -2,7 +2,7 @@
   "profiles": {
     "svg2gfx": {
       "commandName": "Project",
-      "commandLineArgs": "..\\..\\..\\ryzen.svg"
+      "commandLineArgs": "..\\..\\..\\camera.svg -o ..\\..\\..\\svg.hpp"
     },
     "Usage": {
       "commandName": "Project",
