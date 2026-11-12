@@ -34,6 +34,18 @@ public sealed class Generator
     private readonly CppWriter _w = new();
     private readonly Dictionary<string, string> _state = new(); // last emitted setter per canvas property
     private int _shapeCount;
+    private int _maxPathElements; // plutovg path storage needed by the largest shape, in path elements
+
+    // Path storage each operation uses in plutovg (a command header plus one element per point).
+    // quad_to is stored as a cubic; arc_to becomes at most four cubics (one per quarter turn);
+    // circle()/ellipse() add a move, four cubics and a close.
+    private static int SegmentElements(SegKind kind) => kind switch
+    {
+        SegKind.Quad or SegKind.Cubic => 4,
+        SegKind.Arc => 16,
+        _ => 2, // Move, Line, Close
+    };
+    private const int EllipseElements = 20;
     private GeneratorOptions _opt = null!;
 
     public IReadOnlyList<string> Warnings => _ctx.Warnings;
@@ -114,6 +126,14 @@ public sealed class Generator
         o.Line("gfx::canvas cvs(canvas_size);");
         o.Line("gfx::gfx_result res = cvs.initialize();");
         o.Line("if (res != gfx::gfx_result::success) return res;");
+        if (_maxPathElements > 0)
+        {
+            // The canvas keeps its path storage between renders, so reserving room for the
+            // largest shape up front means no path building call below can allocate (or fail).
+            if (opt.Comments) o.Line("// reserve path storage for the largest shape so path building never allocates");
+            o.Line($"res = cvs.reserve({(_maxPathElements + 1) / 2});");
+            o.Line("if (res != gfx::gfx_result::success) return res;");
+        }
         o.Line("res = gfx::draw::canvas(destination, cvs);");
         o.Line("if (res != gfx::gfx_result::success) return res;");
         o.Line("gfx::matrix xform(transform);");
@@ -505,31 +525,38 @@ public sealed class Generator
         }
 
         // geometry
+        // Path building calls only fail when the path storage has to grow, and the routine reserves
+        // enough for the largest shape up front, so only render() needs its result checked.
+        int elements = 0;
         switch (geo)
         {
             case EllipseGeometry el when el.IsCircle:
-                _w.Checked($"cvs.circle({_w.Pt(el.Cx, el.Cy)}, {_w.F(el.Rx)})");
+                elements = EllipseElements;
+                _w.Line($"cvs.circle({_w.Pt(el.Cx, el.Cy)}, {_w.F(el.Rx)});");
                 break;
             case EllipseGeometry el:
-                _w.Checked($"cvs.ellipse({_w.Pt(el.Cx, el.Cy)}, gfx::sizef({_w.F(el.Rx)}, {_w.F(el.Ry)}))");
+                elements = EllipseElements;
+                _w.Line($"cvs.ellipse({_w.Pt(el.Cx, el.Cy)}, gfx::sizef({_w.F(el.Rx)}, {_w.F(el.Ry)}));");
                 break;
             case PathGeometry pg:
                 foreach (var seg in pg.Segs)
                 {
+                    elements += SegmentElements(seg.Kind);
                     switch (seg.Kind)
                     {
-                        case SegKind.Move: _w.Checked($"cvs.move_to({_w.Pt(seg.X, seg.Y)})"); break;
-                        case SegKind.Line: _w.Checked($"cvs.line_to({_w.Pt(seg.X, seg.Y)})"); break;
-                        case SegKind.Quad: _w.Checked($"cvs.quad_to({_w.Pt(seg.X1, seg.Y1)}, {_w.Pt(seg.X, seg.Y)})"); break;
-                        case SegKind.Cubic: _w.Checked($"cvs.cubic_to({_w.Pt(seg.X1, seg.Y1)}, {_w.Pt(seg.X2, seg.Y2)}, {_w.Pt(seg.X, seg.Y)})"); break;
+                        case SegKind.Move: _w.Line($"cvs.move_to({_w.Pt(seg.X, seg.Y)});"); break;
+                        case SegKind.Line: _w.Line($"cvs.line_to({_w.Pt(seg.X, seg.Y)});"); break;
+                        case SegKind.Quad: _w.Line($"cvs.quad_to({_w.Pt(seg.X1, seg.Y1)}, {_w.Pt(seg.X, seg.Y)});"); break;
+                        case SegKind.Cubic: _w.Line($"cvs.cubic_to({_w.Pt(seg.X1, seg.Y1)}, {_w.Pt(seg.X2, seg.Y2)}, {_w.Pt(seg.X, seg.Y)});"); break;
                         case SegKind.Arc:
-                            _w.Checked($"cvs.arc_to(gfx::sizef({_w.F(seg.Rx)}, {_w.F(seg.Ry)}), {_w.F(SvgTransform.Deg(seg.AngleDeg))}, {(seg.Large ? "true" : "false")}, {(seg.Sweep ? "true" : "false")}, {_w.Pt(seg.X, seg.Y)})");
+                            _w.Line($"cvs.arc_to(gfx::sizef({_w.F(seg.Rx)}, {_w.F(seg.Ry)}), {_w.F(SvgTransform.Deg(seg.AngleDeg))}, {(seg.Large ? "true" : "false")}, {(seg.Sweep ? "true" : "false")}, {_w.Pt(seg.X, seg.Y)});");
                             break;
-                        case SegKind.Close: _w.Checked("cvs.close_path()"); break;
+                        case SegKind.Close: _w.Line("cvs.close_path();"); break;
                     }
                 }
                 break;
         }
+        if (elements > _maxPathElements) _maxPathElements = elements;
         _w.Checked("cvs.render()");
         _w.Outdent();
         _w.Line("}");
