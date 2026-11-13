@@ -8,7 +8,9 @@ public readonly record struct Rgba(byte R, byte G, byte B, byte A)
     public Rgba(int r, int g, int b, int a) : this(Clamp(r), Clamp(g), Clamp(b), Clamp(a)) { }
     public static byte Clamp(int v) => (byte)(v < 0 ? 0 : v > 255 ? 255 : v);
     public static byte Clamp(double v) => (byte)Math.Round(v < 0 ? 0 : v > 255 ? 255 : v, MidpointRounding.AwayFromZero);
-    public Rgba WithAlpha(double factor) => new(R, G, B, Clamp(A * factor));
+    /// <summary>The CSS keyword this color came from, if any (keeps aqua/cyan and fuchsia/magenta apart).</summary>
+    public string? Name { get; init; }
+    public Rgba WithAlpha(double factor) => this with { A = Clamp(A * factor) };
 
     /// <summary>gfx::vector_pixel takes channels in A, R, G, B order.</summary>
     public string ToCpp() => $"gfx::vector_pixel({A}, {R}, {G}, {B})";
@@ -29,7 +31,7 @@ public static class SvgColor
         if (s[0] == '#') return TryParseHex(s[1..], out color);
         string lower = s.ToLowerInvariant();
         if (lower == "currentcolor") { color = currentColor; return true; }
-        if (lower == "transparent") { color = new Rgba(0, 0, 0, 0); return true; }
+        if (lower == "transparent") { color = new Rgba(0, 0, 0, 0) { Name = "transparent" }; return true; }
         int paren = lower.IndexOf('(');
         if (paren > 0 && lower.EndsWith(")"))
         {
@@ -39,7 +41,9 @@ public static class SvgColor
             if (fn == "hsl" || fn == "hsla") return TryParseHslFunc(args, out color);
             return false;
         }
-        return Named.TryGetValue(lower, out color);
+        if (!Named.TryGetValue(lower, out color)) return false;
+        color = color with { Name = lower };
+        return true;
     }
 
     private static bool TryParseHex(string h, out Rgba color)
