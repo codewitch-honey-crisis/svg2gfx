@@ -61,13 +61,24 @@ public static class GfxColors
         return d;
     }
 
-    /// <summary>The gfx color name for an exact match, or null.</summary>
+    /// <summary>
+    /// A gfx named color expression (without the color_t:: prefix), or null: an exact match gives "red";
+    /// an opaque named color with other alpha gives "red.opacity8(128)".
+    /// </summary>
     public static string? Lookup(Rgba c)
     {
-        if (!ByValue.TryGetValue(c with { Name = null }, out var names)) return null;
-        if (c.Name != null)
+        if (ByValue.TryGetValue(c with { Name = null }, out var exact)) return Pick(exact, c.Name);
+        if (c.A == 255) return null;
+        if (ByValue.TryGetValue(new Rgba(c.R, c.G, c.B, (byte)255), out var opaque))
+            return $"{Pick(opaque, c.Name)}.opacity8({c.A})";
+        return null;
+    }
+
+    private static string Pick(List<string> names, string? hint)
+    {
+        if (hint != null)
             foreach (var n in names)
-                if (n.Replace("_", "") == c.Name) return n;
+                if (n.Replace("_", "") == hint) return n;
         return names[0];
     }
 }

@@ -422,7 +422,10 @@ public sealed class Generator
         return rp;
     }
 
-    /// <summary>A color as C++: color_t::name when it matches a gfx named color exactly, otherwise a raw vector_pixel.</summary>
+    /// <summary>
+    /// A color as C++: color_t::name when its RGB matches a gfx named color (with .opacity8(a) when only
+    /// the alpha differs), otherwise a raw vector_pixel.
+    /// </summary>
     private string ColorCpp(Rgba c)
     {
         var name = GfxColors.Lookup(c);
