@@ -47,6 +47,10 @@ public sealed class Generator
         _ => 2, // Move, Line, Close
     };
     private const int EllipseElements = 20;
+    // rectangle() adds a move, four lines (the last back to the start) and a close;
+    // rounded_rectangle() adds a move, four cubics, four lines and a close.
+    private const int RectElements = 12;
+    private const int RoundedRectElements = 28;
     private GeneratorOptions _opt = null!;
 
     public IReadOnlyList<string> Warnings => _ctx.Warnings;
@@ -302,7 +306,8 @@ public sealed class Generator
                 if (rxo < 0) rxo = null; if (ryo < 0) ryo = null;
                 double rx = rxo ?? ryo ?? 0, ry = ryo ?? rxo ?? 0;
                 rx = Math.Min(rx, w / 2); ry = Math.Min(ry, h / 2);
-                return RectPath(x, y, w, h, rx, ry);
+                if (rx <= 0 || ry <= 0) rx = ry = 0; // either radius being zero gives square corners
+                return new RectGeometry { X = x, Y = y, W = w, H = h, Rx = rx, Ry = ry };
             }
             case "circle":
             {
@@ -442,6 +447,26 @@ public sealed class Generator
         _w.Line(statement);
     }
 
+    /// <summary>
+    /// fill_color()/stroke_color() also switch the paint type to solid, so a color change needs no
+    /// paint_type(solid) call; that's only needed when the color is unchanged but the paint type isn't solid.
+    /// </summary>
+    private void SetSolid(string prefix, Rgba color)
+    {
+        string solid = $"cvs.{prefix}_paint_type(gfx::paint_type::solid);";
+        string statement = $"cvs.{prefix}_color({ColorCpp(color)});";
+        if (!_state.TryGetValue($"{prefix}_color", out var prev) || prev != statement)
+        {
+            _state[$"{prefix}_color"] = statement;
+            _state[$"{prefix}_paint_type"] = solid;
+            _w.Line(statement);
+        }
+        else
+        {
+            Set($"{prefix}_paint_type", solid);
+        }
+    }
+
     private void EmitGradient(string prefix, ResolvedPaint p)
     {
         _w.Line($"gfx::gradient_stop {prefix}_stops[] = {{");
@@ -482,7 +507,7 @@ public sealed class Generator
         if (!s.Display) return;
         WarnIgnoredEffects(e);
         var ctm = LocalTransform(e).Then(parentCtm);
-        var geo = BuildGeometry(e, s);
+        Geometry? geo = BuildGeometry(e, s);
         if (geo == null || !s.Visible) return;
         var bounds = geo.GetBounds();
         var fill = ResolvePaint(s.Fill, s, bounds, e, "fill");
@@ -491,6 +516,17 @@ public sealed class Generator
         if (fillOpacity <= 0) fill = ResolvedPaint.None;
         if (strokeOpacity <= 0) stroke = ResolvedPaint.None;
         if (fill.Kind == PaintKind.None && stroke.Kind == PaintKind.None) return;
+        // Rects keep the exact SVG path where the canvas primitives would draw something different:
+        // - rectangle()/rounded_rectangle() take inclusive bounds (x2 = x + w - 1) and normalize them,
+        //   so a width or height under 1 would swap the corners and grow the rect
+        // - rounded_rectangle() starts its outline on the left edge rather than at (x + rx, y),
+        //   which only shows when the stroke is dashed
+        // - circle()/ellipse() likewise start at the top rather than at (cx + rx, cy)
+        bool dashed = stroke.Kind != PaintKind.None && s.Dash != null;
+        if (geo is RectGeometry dr && (dr.W < 1 || dr.H < 1 || (dr.IsRounded && dashed)))
+            geo = RectPath(dr.X, dr.Y, dr.W, dr.H, dr.Rx, dr.Ry);
+        else if (geo is EllipseGeometry de && dashed)
+            geo = de.ToPath();
 
         ++_shapeCount;
         if (_opt.Comments) _w.Line($"// {Describe(e)}");
@@ -505,8 +541,7 @@ public sealed class Generator
                 Set("fill_paint_type", "cvs.fill_paint_type(gfx::paint_type::none);");
                 break;
             case PaintKind.Color:
-                Set("fill_paint_type", "cvs.fill_paint_type(gfx::paint_type::solid);");
-                Set("fill_color", $"cvs.fill_color({ColorCpp(fill.Color)});");
+                SetSolid("fill", fill.Color);
                 break;
             case PaintKind.Url:
                 EmitGradient("fill", fill);
@@ -525,8 +560,7 @@ public sealed class Generator
                 Set("stroke_paint_type", "cvs.stroke_paint_type(gfx::paint_type::none);");
                 break;
             case PaintKind.Color:
-                Set("stroke_paint_type", "cvs.stroke_paint_type(gfx::paint_type::solid);");
-                Set("stroke_color", $"cvs.stroke_color({ColorCpp(stroke.Color)});");
+                SetSolid("stroke", stroke.Color);
                 break;
             case PaintKind.Url:
                 EmitGradient("stroke", stroke);
@@ -557,6 +591,22 @@ public sealed class Generator
         int elements = 0;
         switch (geo)
         {
+            case RectGeometry r:
+            {
+                // canvas rectangles take inclusive bounds: width = x2 - x1 + 1
+                string rc = $"gfx::rectf({_w.F(r.X)}, {_w.F(r.Y)}, {_w.F(r.X + r.W - 1)}, {_w.F(r.Y + r.H - 1)})";
+                if (r.IsRounded)
+                {
+                    elements = RoundedRectElements;
+                    _w.Line($"cvs.rounded_rectangle({rc}, gfx::sizef({_w.F(r.Rx)}, {_w.F(r.Ry)}));");
+                }
+                else
+                {
+                    elements = RectElements;
+                    _w.Line($"cvs.rectangle({rc});");
+                }
+                break;
+            }
             case EllipseGeometry el when el.IsCircle:
                 elements = EllipseElements;
                 _w.Line($"cvs.circle({_w.Pt(el.Cx, el.Cy)}, {_w.F(el.Rx)});");
