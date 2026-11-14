@@ -516,17 +516,11 @@ public sealed class Generator
         if (fillOpacity <= 0) fill = ResolvedPaint.None;
         if (strokeOpacity <= 0) stroke = ResolvedPaint.None;
         if (fill.Kind == PaintKind.None && stroke.Kind == PaintKind.None) return;
-        // Rects keep the exact SVG path where the canvas primitives would draw something different:
-        // - rectangle()/rounded_rectangle() take inclusive bounds (x2 = x + w - 1) and normalize them,
-        //   so a width or height under 1 would swap the corners and grow the rect
-        // - rounded_rectangle() starts its outline on the left edge rather than at (x + rx, y),
-        //   which only shows when the stroke is dashed
-        // - circle()/ellipse() likewise start at the top rather than at (cx + rx, cy)
-        bool dashed = stroke.Kind != PaintKind.None && s.Dash != null;
-        if (geo is RectGeometry dr && (dr.W < 1 || dr.H < 1 || (dr.IsRounded && dashed)))
+        // rectangle()/rounded_rectangle() take inclusive bounds (x2 = x + w - 1) and normalize them, so a
+        // width or height under 1 would swap the corners and grow the rect; those keep the exact SVG path.
+        // (Since gfx 2.11.2 the primitives' outlines start where SVG's do, so dashed strokes match too.)
+        if (geo is RectGeometry dr && (dr.W < 1 || dr.H < 1))
             geo = RectPath(dr.X, dr.Y, dr.W, dr.H, dr.Rx, dr.Ry);
-        else if (geo is EllipseGeometry de && dashed)
-            geo = de.ToPath();
 
         ++_shapeCount;
         if (_opt.Comments) _w.Line($"// {Describe(e)}");

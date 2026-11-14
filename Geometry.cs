@@ -162,10 +162,27 @@ public sealed class PathGeometry : Geometry
     }
 }
 
+/// <summary>A &lt;rect&gt;, drawn with the canvas's rectangle()/rounded_rectangle() primitives.</summary>
+public sealed class RectGeometry : Geometry
+{
+    public double X, Y, W, H, Rx, Ry;
+    /// <summary>Either corner radius being zero gives square corners.</summary>
+    public bool IsRounded => Rx > 0 && Ry > 0;
+
+    public override Bounds GetBounds()
+    {
+        var b = new Bounds();
+        b.Add(X, Y);
+        b.Add(X + W, Y + H);
+        return b;
+    }
+}
+
 public sealed class EllipseGeometry : Geometry
 {
     public double Cx, Cy, Rx, Ry;
     public bool IsCircle => Rx == Ry;
+
     public override Bounds GetBounds()
     {
         var b = new Bounds();
